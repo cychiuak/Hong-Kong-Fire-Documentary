@@ -30,6 +30,7 @@ SOURCE_DIR_MAP = {
     "Points Media": "points-media",
     "CNN": "cnn",
     "CNN News": "cnn",
+    "Commercial Radio": "commercial-radio",
 }
 
 # Mapping of Scraper Source Title -> Markdown Header Title (if different)
@@ -46,6 +47,7 @@ SOURCE_HEADER_MAP = {
     "Guardian": "The Guardian",
     "DotDotNews": "Dotdotnews",
     "CNN": "CNN News",
+    "Commercial Radio": "商業電台",
 }
 
 
