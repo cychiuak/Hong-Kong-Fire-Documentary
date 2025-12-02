@@ -204,17 +204,41 @@ def get_site_config(url: str, config: dict) -> dict:
     }
 
 
-def save_archive(url_info: dict, html: str, source_dir: Path) -> Path:
-    """Save scraped content to archive directory"""
+def get_existing_archive_url(folder: Path) -> str | None:
+    """Get URL from existing archive folder's metadata"""
+    metadata_file = folder / "metadata.json"
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, encoding="utf-8") as f:
+                return json.load(f).get("url")
+        except Exception:
+            pass
+    return None
+
+
+def save_archive(url_info: dict, html: str, source_dir: Path) -> Path | None:
+    """Save scraped content to archive directory. Returns None if already exists."""
     archive_dir = source_dir / "archive"
     archive_dir.mkdir(exist_ok=True)
 
     slug = slugify(url_info["title"])
     article_dir = archive_dir / slug
+    url = url_info["url"]
 
+    # Check if folder exists with same URL (duplicate)
     if article_dir.exists():
+        existing_url = get_existing_archive_url(article_dir)
+        if existing_url == url:
+            log(f"  ⏭️ Archive already exists for this URL", "WARN")
+            return None  # Skip - already archived
+        
+        # Different URL, need unique folder name
         counter = 1
         while (archive_dir / f"{slug}-{counter}").exists():
+            existing_url = get_existing_archive_url(archive_dir / f"{slug}-{counter}")
+            if existing_url == url:
+                log(f"  ⏭️ Archive already exists for this URL", "WARN")
+                return None  # Skip - already archived
             counter += 1
         article_dir = archive_dir / f"{slug}-{counter}"
 
@@ -226,9 +250,9 @@ def save_archive(url_info: dict, html: str, source_dir: Path) -> Path:
 
     # Save metadata
     metadata = {
-        "url": url_info["url"],
+        "url": url,
         "title": url_info["title"],
-        "source": url_info["source"],
+        "source": url_info["source"].lower(),  # Normalize to lowercase
         "source_file": url_info["source_file"],
         "scraped_at": datetime.now().isoformat(),
         "archive_path": str(article_dir.relative_to(PROJECT_ROOT)),
@@ -369,8 +393,8 @@ async def scrape_domain_queue(
         html, success = await scrape_url_async(url_info, context, config, browser=browser)
 
         if success and html:
-            # Find source directory
-            source_dir = NEWS_DIR / source
+            # Find source directory (case-insensitive)
+            source_dir = NEWS_DIR / source.lower()
             if not source_dir.exists():
                 for d in NEWS_DIR.iterdir():
                     if d.is_dir() and d.name.lower() == source.lower():
@@ -379,17 +403,28 @@ async def scrape_domain_queue(
 
             archive_path = save_archive(url_info, html, source_dir)
 
-            # Update registry
-            registry["scraped_urls"][url] = {
-                "title": url_info["title"],
-                "source": source,
-                "scraped_at": datetime.now().isoformat(),
-                "archive_path": str(archive_path.relative_to(PROJECT_ROOT)),
-            }
-            save_registry(registry)
-
-            results["success"] += 1
-            log(f"  ✓ Saved ({len(html) // 1024}KB)")
+            if archive_path is None:
+                # Already existed - still mark as success and add to registry
+                results["success"] += 1
+                # Update registry to prevent future attempts
+                registry["scraped_urls"][url] = {
+                    "title": url_info["title"],
+                    "source": source.lower(),
+                    "scraped_at": datetime.now().isoformat(),
+                    "archive_path": "already_existed",
+                }
+                save_registry(registry)
+            else:
+                # New archive saved
+                registry["scraped_urls"][url] = {
+                    "title": url_info["title"],
+                    "source": source.lower(),
+                    "scraped_at": datetime.now().isoformat(),
+                    "archive_path": str(archive_path.relative_to(PROJECT_ROOT)),
+                }
+                save_registry(registry)
+                results["success"] += 1
+                log(f"  ✓ Saved ({len(html) // 1024}KB)")
         else:
             results["failed"] += 1
             results["failed_urls"].append(url)  # Track failed URL
